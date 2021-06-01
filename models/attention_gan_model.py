@@ -19,7 +19,7 @@ class AttentionGANModel(BaseModel):
     def __init__(self, opt):
         BaseModel.__init__(self, opt)
         # specify the training losses you want to print out. The training/test scripts will call <BaseModel.get_current_losses>
-        self.loss_names = ['D_A', 'G_A', 'cycle_A', 'idt_A', 'D_B', 'G_B', 'cycle_B', 'idt_B']
+        self.loss_names = ['D_A', 'G_A', 'cycle_A', 'idt_A', 'D_B', 'G_B', 'cycle_B', 'idt_B', 'cons_A', 'cons_B']
         # specify the images you want to save/display. The training/test scripts will call <BaseModel.get_current_visuals>
         visual_names_A = ['real_A', 'fake_B', 'rec_A', 'o1_b', 'o2_b', 'o3_b', 'o4_b', 'o5_b', 'o6_b', 'o7_b', 'o8_b', 'o9_b', 'o10_b',
         'a1_b', 'a2_b', 'a3_b', 'a4_b', 'a5_b', 'a6_b', 'a7_b', 'a8_b', 'a9_b', 'a10_b', 'i1_b', 'i2_b', 'i3_b', 'i4_b', 'i5_b', 
@@ -44,6 +44,8 @@ class AttentionGANModel(BaseModel):
         # define networks (both Generators and discriminators)
         # The naming is different from those used in the paper.
         # Code (vs. paper): G_A (G), G_B (F), D_A (D_Y), D_B (D_X)
+        print('opt.input_nc, opt.output_nc, opt.ngf, \'our\', opt.norm, not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids')
+        print(opt.input_nc, opt.output_nc, opt.ngf, 'our', opt.norm, not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
         self.netG_A = networks.define_G(opt.input_nc, opt.output_nc, opt.ngf, 'our', opt.norm,
                                         not opt.no_dropout, opt.init_type, opt.init_gain, self.gpu_ids)
         self.netG_B = networks.define_G(opt.output_nc, opt.input_nc, opt.ngf, 'our', opt.norm,
@@ -64,6 +66,7 @@ class AttentionGANModel(BaseModel):
             self.criterionGAN = networks.GANLoss(opt.gan_mode).to(self.device)  # define GAN loss.
             self.criterionCycle = torch.nn.L1Loss()
             self.criterionIdt = torch.nn.L1Loss()
+
             # initialize optimizers; schedulers will be automatically created by function <BaseModel.setup>.
             self.optimizer_G = torch.optim.Adam(itertools.chain(self.netG_A.parameters(), self.netG_B.parameters()), lr=opt.lr, betas=(opt.beta1, 0.999))
             self.optimizer_D = torch.optim.Adam(itertools.chain(self.netD_A.parameters(), self.netD_B.parameters()), lr=opt.lr, betas=(opt.beta1, 0.999))
@@ -83,6 +86,7 @@ class AttentionGANModel(BaseModel):
 
     def forward(self):
         """Run forward pass; called by both functions <optimize_parameters> and <test>."""
+        #print(self.real_A.shape)
         self.fake_B, self.o1_b, self.o2_b, self.o3_b, self.o4_b, self.o5_b, self.o6_b, self.o7_b, self.o8_b, self.o9_b, self.o10_b, \
         self.a1_b, self.a2_b, self.a3_b, self.a4_b, self.a5_b, self.a6_b, self.a7_b, self.a8_b, self.a9_b, self.a10_b, \
         self.i1_b, self.i2_b, self.i3_b, self.i4_b, self.i5_b, self.i6_b, self.i7_b, self.i8_b, self.i9_b = self.netG_A(self.real_A)  # G_A(A)
@@ -95,6 +99,11 @@ class AttentionGANModel(BaseModel):
         self.rec_B, _, _, _, _, _, _, _, _, _, _, \
         _, _, _, _, _, _, _, _, _, _, \
         _, _, _, _, _, _, _, _, _ = self.netG_A(self.fake_A)   # G_A(G_B(B))
+
+        # print('check l1 loss: {}'.format(
+        #     (self.fake_B - self.real_A).abs().mean()
+        # ))
+
 
     def backward_D_basic(self, netD, real, fake):
         """Calculate GAN loss for the discriminator
@@ -131,6 +140,7 @@ class AttentionGANModel(BaseModel):
         lambda_idt = self.opt.lambda_identity
         lambda_A = self.opt.lambda_A
         lambda_B = self.opt.lambda_B
+        # print('lambda_A, lambda_B, lambda_idt: {}, {}, {}'.format(lambda_A, lambda_B, lambda_idt))
         # Identity loss
         if lambda_idt > 0:
             # G_A should be identity if real_B is fed: ||G_A(B) - B||
@@ -143,6 +153,16 @@ class AttentionGANModel(BaseModel):
             _, _, _, _, _, _, _, _, _, _, \
             _, _, _, _, _, _, _, _, _  = self.netG_B(self.real_A)
             self.loss_idt_B = self.criterionIdt(self.idt_B, self.real_A) * lambda_A * lambda_idt
+            # print('self.loss_idt_B: {}'.format(self.loss_idt_B))
+            # print('check l1 loss: {}'.format(
+            #     (self.idt_B - self.real_A).abs().mean()
+            # ))
+            # torch.save(
+            #     {
+            #         'idt_B': self.idt_B.data.cpu(),
+            #         'real_A': self.real_A.data.cpu()
+            #     },
+            #     'p.pth')
         else:
             self.loss_idt_A = 0
             self.loss_idt_B = 0
@@ -155,8 +175,19 @@ class AttentionGANModel(BaseModel):
         self.loss_cycle_A = self.criterionCycle(self.rec_A, self.real_A) * lambda_A
         # Backward cycle loss || G_A(G_B(B)) - B||
         self.loss_cycle_B = self.criterionCycle(self.rec_B, self.real_B) * lambda_B
+
+
+        # loss consistensy (pixel)
+        self.loss_cons_A = self.criterionIdt(self.fake_B, self.real_A) * lambda_A * 0.1
+        self.loss_cons_B = self.criterionIdt(self.fake_A, self.real_B) * lambda_B * 0.1
+
+        # self.criterionIdt(self.fake_A, self.real_B) * lambda_B * self.a10_a.detach()
+
+        # cons_loss = self.criterionIdt(self.fake_B, self.real_A) * lambda_A +\
+        #             self.criterionIdt(self.fake_A, self.real_B) * lambda_B
+
         # combined loss and calculate gradients
-        self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B + self.loss_idt_A + self.loss_idt_B
+        self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B + self.loss_idt_A + self.loss_idt_B + self.loss_cons_A + self.loss_cons_B
         self.loss_G.backward()
 
     def optimize_parameters(self):
