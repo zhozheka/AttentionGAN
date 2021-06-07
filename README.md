@@ -1,3 +1,7 @@
+```
+python train.py --dataset_mode cropped --dataroot  xxx  --model attention_gan --niter 40 --niter_decay 10  --name tooth_consistensy_0.1_cropped_highres___ --batch_size 2
+```
+
 [![License CC BY-NC-SA 4.0](https://img.shields.io/badge/license-CC4.0-blue.svg)](https://github.com/Ha0Tang/AttentionGAN/blob/master/LICENSE.md)
 ![Python 3.6](https://img.shields.io/badge/python-3.6-green.svg)
 ![Packagist](https://img.shields.io/badge/Pytorch-0.4.1-red.svg)
